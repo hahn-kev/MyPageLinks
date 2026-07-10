@@ -92,45 +92,21 @@ async function createFloatingUI(): Promise<void> {
       box-shadow: 0 8px 30px rgba(0,0,0,0.18);
       overflow: hidden;
 
-      /* Anchor to the FAB: prefer above, fall back to below */
-      bottom: anchor(top);
-      margin-bottom: 8px;
-      position-try-fallbacks: --mpl-above-right, --mpl-below-left, --mpl-below-right;
+      /* Position the panel relative to the FAB anchor */
+      position-area: top span-right;
+      margin: 8px;
 
-      /* Horizontal: prefer left-aligned, auto-flip via try fallbacks */
-      left: anchor(left);
+      /* Automatically flip to prevent overflow/viewport collisions */
+      position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
 
       /* Keep within viewport */
       position-visibility: anchors-visible;
-      inset-area: none;
 
-      transform-origin: bottom left;
+      transform-origin: center;
       transform: scale(0.3);
       opacity: 0;
       pointer-events: none;
       transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1), opacity 0.2s ease;
-    }
-
-    @position-try --mpl-above-right {
-      bottom: anchor(top);
-      left: auto;
-      right: anchor(right);
-      margin-bottom: 8px;
-    }
-    @position-try --mpl-below-left {
-      bottom: auto;
-      top: anchor(bottom);
-      left: anchor(left);
-      margin-top: 8px;
-      margin-bottom: 0;
-    }
-    @position-try --mpl-below-right {
-      bottom: auto;
-      top: anchor(bottom);
-      left: auto;
-      right: anchor(right);
-      margin-top: 8px;
-      margin-bottom: 0;
     }
 
     .panel.open {
