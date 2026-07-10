@@ -6,9 +6,13 @@
 </head>
 <body>
   <div class="container">
-    <h1>MyPageLinks</h1>
-    <button id="save-link" class="btn btn-primary">Save Current Page</button>
-    <ul id="links-list"></ul>
+    <h1 id="site-header">MyPageLinks</h1>
+    <form id="add-form" class="add-form">
+      <input type="text" id="input-url" placeholder="URL" required>
+      <input type="text" id="input-title" placeholder="Title (optional)">
+      <button type="submit" class="btn btn-primary">Add</button>
+    </form>
+    <ul id="bookmarks-list"></ul>
   </div>
   <script src="popup.js"></script>
 </body>
