@@ -8,22 +8,38 @@ interface ContentSiteBookmarks {
   [hostname: string]: ContentBookmark[];
 }
 
+interface FabPositions {
+  [hostname: string]: { bottom: number; left: number };
+}
+
 const MPL_STORAGE_KEY = "siteBookmarks";
+const MPL_POSITION_KEY = "fabPositions";
 
 function mplIsBookmarklet(url: string): boolean {
   return url.trimStart().toLowerCase().startsWith("javascript:");
 }
 
-function createFloatingUI(): void {
+async function createFloatingUI(): Promise<void> {
   // Prevent double-injection
   if (document.getElementById("mpl-fab")) return;
 
   const hostname = window.location.hostname;
 
+  // Only show FAB if there are bookmarks for this site
+  const initialResult = await browser.storage.local.get(MPL_STORAGE_KEY);
+  const initialAll = (initialResult[MPL_STORAGE_KEY] as ContentSiteBookmarks) ?? {};
+  const initialBookmarks = initialAll[hostname] ?? [];
+  if (initialBookmarks.length === 0) return;
+
+  // Load saved position
+  const posResult = await browser.storage.local.get(MPL_POSITION_KEY);
+  const positions = (posResult[MPL_POSITION_KEY] as FabPositions) ?? {};
+  const savedPos = positions[hostname] ?? { bottom: 24, left: 24 };
+
   // Shadow host for style isolation
   const host = document.createElement("div");
   host.id = "mpl-fab";
-  host.style.cssText = "all:initial;position:fixed;bottom:24px;left:24px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;";
+  host.style.cssText = `all:initial;position:fixed;bottom:${savedPos.bottom}px;left:${savedPos.left}px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;`;
   document.documentElement.appendChild(host);
 
   const shadow = host.attachShadow({ mode: "closed" });
@@ -33,12 +49,13 @@ function createFloatingUI(): void {
     * { margin:0; padding:0; box-sizing:border-box; }
 
     .fab {
+      anchor-name: --mpl-fab;
       width: 48px;
       height: 48px;
       border-radius: 50%;
       background: #0060df;
       border: none;
-      cursor: pointer;
+      cursor: grab;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -46,12 +63,14 @@ function createFloatingUI(): void {
       transition: transform 0.2s ease, box-shadow 0.2s ease;
       position: relative;
       z-index: 2;
+      user-select: none;
     }
     .fab:hover {
       transform: scale(1.1);
       box-shadow: 0 6px 20px rgba(0,96,223,0.5);
     }
-    .fab:active { transform: scale(0.95); }
+    .fab:active { transform: scale(0.95); cursor: grabbing; }
+    .fab.dragging { cursor: grabbing; transition: none; transform: none; }
     .fab svg {
       width: 22px;
       height: 22px;
@@ -60,24 +79,60 @@ function createFloatingUI(): void {
       stroke-width: 2;
       stroke-linecap: round;
       stroke-linejoin: round;
+      pointer-events: none;
     }
 
     .panel {
-      position: absolute;
-      bottom: 56px;
-      left: 0;
+      position: fixed;
+      position-anchor: --mpl-fab;
       width: 260px;
       max-height: 340px;
       background: #fff;
       border-radius: 12px;
       box-shadow: 0 8px 30px rgba(0,0,0,0.18);
       overflow: hidden;
+
+      /* Anchor to the FAB: prefer above, fall back to below */
+      bottom: anchor(top);
+      margin-bottom: 8px;
+      position-try-fallbacks: --mpl-above-right, --mpl-below-left, --mpl-below-right;
+
+      /* Horizontal: prefer left-aligned, auto-flip via try fallbacks */
+      left: anchor(left);
+
+      /* Keep within viewport */
+      position-visibility: anchors-visible;
+      inset-area: none;
+
       transform-origin: bottom left;
       transform: scale(0.3);
       opacity: 0;
       pointer-events: none;
       transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1), opacity 0.2s ease;
     }
+
+    @position-try --mpl-above-right {
+      bottom: anchor(top);
+      left: auto;
+      right: anchor(right);
+      margin-bottom: 8px;
+    }
+    @position-try --mpl-below-left {
+      bottom: auto;
+      top: anchor(bottom);
+      left: anchor(left);
+      margin-top: 8px;
+      margin-bottom: 0;
+    }
+    @position-try --mpl-below-right {
+      bottom: auto;
+      top: anchor(bottom);
+      left: auto;
+      right: anchor(right);
+      margin-top: 8px;
+      margin-bottom: 0;
+    }
+
     .panel.open {
       transform: scale(1);
       opacity: 1;
@@ -184,6 +239,55 @@ function createFloatingUI(): void {
     panel.classList.remove("open");
   }
 
+  // Drag logic
+  let isDragging = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let dragStartLeft = 0;
+  let dragStartBottom = 0;
+  let didDrag = false;
+  const DRAG_THRESHOLD = 5;
+
+  fab.addEventListener("mousedown", (e: MouseEvent) => {
+    if (e.button !== 0) return;
+    isDragging = true;
+    didDrag = false;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    dragStartLeft = parseInt(host.style.left) || savedPos.left;
+    dragStartBottom = parseInt(host.style.bottom) || savedPos.bottom;
+    fab.classList.add("dragging");
+    e.preventDefault();
+  });
+
+  document.addEventListener("mousemove", (e: MouseEvent) => {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStartX;
+    const dy = e.clientY - dragStartY;
+    if (!didDrag && Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+    didDrag = true;
+
+    const newLeft = Math.max(0, Math.min(window.innerWidth - 48, dragStartLeft + dx));
+    const newBottom = Math.max(0, Math.min(window.innerHeight - 48, dragStartBottom - dy));
+    host.style.left = `${newLeft}px`;
+    host.style.bottom = `${newBottom}px`;
+  });
+
+  document.addEventListener("mouseup", async () => {
+    if (!isDragging) return;
+    isDragging = false;
+    fab.classList.remove("dragging");
+
+    if (didDrag) {
+      const newLeft = parseInt(host.style.left) || 24;
+      const newBottom = parseInt(host.style.bottom) || 24;
+      const posRes = await browser.storage.local.get(MPL_POSITION_KEY);
+      const allPos = (posRes[MPL_POSITION_KEY] as FabPositions) ?? {};
+      allPos[hostname] = { bottom: newBottom, left: newLeft };
+      await browser.storage.local.set({ [MPL_POSITION_KEY]: allPos });
+    }
+  });
+
   async function loadBookmarks(): Promise<void> {
     const result = await browser.storage.local.get(MPL_STORAGE_KEY);
     const all = (result[MPL_STORAGE_KEY] as ContentSiteBookmarks) ?? {};
@@ -251,7 +355,7 @@ function createFloatingUI(): void {
 
   fab.addEventListener("click", (e) => {
     e.stopPropagation();
-    toggle();
+    if (!didDrag) toggle();
   });
 
   // Close when clicking outside
