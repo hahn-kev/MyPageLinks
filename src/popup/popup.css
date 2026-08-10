@@ -82,6 +82,23 @@ h1 {
   background: #eef4ff;
 }
 
+#bookmarks-list li.dragging {
+  opacity: 0.4;
+  user-select: none;
+}
+
+.drag-handle {
+  cursor: grab;
+  color: #bbb;
+  flex-shrink: 0;
+  margin-right: 6px;
+  font-size: 14px;
+}
+
+.drag-handle:hover {
+  color: #888;
+}
+
 #bookmarks-list li .bookmark-text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -95,8 +112,7 @@ h1 {
   color: #b5007f;
 }
 
-#bookmarks-list li.bookmarklet::before {
-  content: "JS";
+.js-badge {
   font-size: 9px;
   font-weight: 700;
   color: #fff;

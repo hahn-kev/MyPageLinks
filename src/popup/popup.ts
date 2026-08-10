@@ -64,6 +64,68 @@ async function saveBookmarksForSite(hostname: string, bookmarks: Bookmark[]): Pr
   await browser.storage.local.set({ [STORAGE_KEY]: all });
 }
 
+// Native HTML5 drag-and-drop is unreliable inside a browser_action popup: the
+// OS-level drag session it triggers can steal focus and close the popup
+// mid-drag before the drop handler runs. Track the drag with plain mouse
+// events instead, the same approach the on-page FAB uses.
+let draggingLi: HTMLLIElement | null = null;
+
+// The click that follows a drag's mousedown/mouseup fires on whatever element
+// ends up under the cursor, which may be a different bookmark's row rather
+// than the drag handle — so suppress it globally instead of on the handle.
+let suppressNextClick = false;
+
+document.addEventListener(
+  "click",
+  (event) => {
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      event.stopPropagation();
+      event.preventDefault();
+    }
+  },
+  true,
+);
+
+function startDragReorder(li: HTMLLIElement, list: HTMLUListElement, hostname: string): void {
+  suppressNextClick = true;
+  draggingLi = li;
+  li.classList.add("dragging");
+
+  function onMouseMove(event: MouseEvent): void {
+    if (!draggingLi) return;
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    const targetLi = target?.closest("li");
+    if (!targetLi || targetLi === draggingLi || targetLi.parentElement !== list) return;
+
+    const rect = targetLi.getBoundingClientRect();
+    const before = event.clientY < rect.top + rect.height / 2;
+    list.insertBefore(draggingLi, before ? targetLi : targetLi.nextSibling);
+  }
+
+  async function onMouseUp(): Promise<void> {
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+    if (!draggingLi) return;
+
+    draggingLi.classList.remove("dragging");
+    draggingLi = null;
+
+    const orderedIds = Array.from(list.querySelectorAll<HTMLLIElement>("li[data-id]")).map(
+      (el) => el.dataset.id as string,
+    );
+    const current = await getBookmarksForSite(hostname);
+    const byId = new Map(current.map((b) => [b.id, b]));
+    const reordered = orderedIds
+      .map((id) => byId.get(id))
+      .filter((b): b is Bookmark => Boolean(b));
+    await saveBookmarksForSite(hostname, reordered);
+  }
+
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("mouseup", onMouseUp);
+}
+
 function renderEditForm(
   li: HTMLLIElement,
   bookmark: Bookmark,
@@ -151,6 +213,12 @@ function renderBookmarks(
 
   for (const bookmark of bookmarks) {
     const li = document.createElement("li");
+    li.dataset.id = bookmark.id;
+
+    const dragHandle = document.createElement("span");
+    dragHandle.className = "drag-handle";
+    dragHandle.textContent = "⠿";
+    dragHandle.title = "Drag to reorder";
 
     const text = document.createElement("span");
     text.className = "bookmark-text";
@@ -159,9 +227,19 @@ function renderBookmarks(
 
     const bookmarkIsBookmarklet = isBookmarklet(bookmark.url);
 
+    let jsBadge: HTMLSpanElement | null = null;
     if (bookmarkIsBookmarklet) {
       li.classList.add("bookmarklet");
+      jsBadge = document.createElement("span");
+      jsBadge.className = "js-badge";
+      jsBadge.textContent = "JS";
     }
+
+    dragHandle.addEventListener("mousedown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      startDragReorder(li, list, hostname);
+    });
 
     li.addEventListener("click", async () => {
       if (bookmarkIsBookmarklet) {
@@ -205,6 +283,8 @@ function renderBookmarks(
       renderBookmarks(updated, list, hostname);
     });
 
+    li.appendChild(dragHandle);
+    if (jsBadge) li.appendChild(jsBadge);
     li.appendChild(text);
     li.appendChild(editBtn);
     li.appendChild(removeBtn);
