@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "build": "tsc && pnpm run copy-assets",
-    "copy-assets": "powershell -Command \"Copy-Item src/manifest.json dist/; New-Item -ItemType Directory -Force dist/popup | Out-Null; Copy-Item src/popup/popup.html,src/popup/popup.css dist/popup/; if (Test-Path src/icons) { Copy-Item -Recurse -Force src/icons dist/ }\"",
+    "copy-assets": "node scripts/copy-assets.js",
     "dev": "pnpm run build && web-ext run --source-dir dist",
     "lint": "web-ext lint --source-dir dist",
     "package": "pnpm run build && web-ext build --source-dir dist --artifacts-dir artifacts"
