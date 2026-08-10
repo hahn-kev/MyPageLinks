@@ -1,4 +1,5 @@
 interface ContentBookmark {
+  id: string;
   url: string;
   title: string;
   createdAt: number;
@@ -19,6 +20,31 @@ function mplIsBookmarklet(url: string): boolean {
   return url.trimStart().toLowerCase().startsWith("javascript:");
 }
 
+function mplGenerateId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function mplGetBookmarksForSite(hostname: string): Promise<ContentBookmark[]> {
+  const result = await browser.storage.local.get(MPL_STORAGE_KEY);
+  const all = (result[MPL_STORAGE_KEY] as ContentSiteBookmarks) ?? {};
+  const bookmarks = all[hostname] ?? [];
+
+  // Migrate any bookmarks saved before ids were introduced
+  let migrated = false;
+  for (const bookmark of bookmarks) {
+    if (!bookmark.id) {
+      bookmark.id = mplGenerateId();
+      migrated = true;
+    }
+  }
+  if (migrated) {
+    all[hostname] = bookmarks;
+    await browser.storage.local.set({ [MPL_STORAGE_KEY]: all });
+  }
+
+  return bookmarks;
+}
+
 async function createFloatingUI(): Promise<void> {
   // Prevent double-injection
   if (document.getElementById("mpl-fab")) return;
@@ -26,9 +52,7 @@ async function createFloatingUI(): Promise<void> {
   const hostname = window.location.hostname;
 
   // Only show FAB if there are bookmarks for this site
-  const initialResult = await browser.storage.local.get(MPL_STORAGE_KEY);
-  const initialAll = (initialResult[MPL_STORAGE_KEY] as ContentSiteBookmarks) ?? {};
-  const initialBookmarks = initialAll[hostname] ?? [];
+  const initialBookmarks = await mplGetBookmarksForSite(hostname);
   if (initialBookmarks.length === 0) return;
 
   // Load saved position
@@ -265,9 +289,7 @@ async function createFloatingUI(): Promise<void> {
   });
 
   async function loadBookmarks(): Promise<void> {
-    const result = await browser.storage.local.get(MPL_STORAGE_KEY);
-    const all = (result[MPL_STORAGE_KEY] as ContentSiteBookmarks) ?? {};
-    const bookmarks = all[hostname] ?? [];
+    const bookmarks = await mplGetBookmarksForSite(hostname);
 
     panelList.innerHTML = "";
 
@@ -298,15 +320,7 @@ async function createFloatingUI(): Promise<void> {
       li.appendChild(text);
 
       li.addEventListener("click", () => {
-        if (bmIsBookmarklet) {
-          const js = bm.url.replace(/^\s*javascript:\s*/i, "");
-          const script = document.createElement("script");
-          script.textContent = decodeURIComponent(js);
-          document.documentElement.appendChild(script);
-          script.remove();
-        } else {
-          window.location.href = bm.url;
-        }
+        browser.runtime.sendMessage({ type: "activateBookmark", id: bm.id });
         collapse();
       });
 

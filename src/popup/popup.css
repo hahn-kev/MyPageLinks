@@ -119,3 +119,60 @@ h1 {
 .btn-remove:hover {
   color: #e74c3c;
 }
+
+.btn-edit {
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+
+.btn-edit:hover {
+  color: #0060df;
+}
+
+#bookmarks-list li.editing {
+  cursor: default;
+  display: block;
+}
+
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.edit-form input {
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+}
+
+.edit-form input:focus {
+  border-color: #0060df;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-small {
+  flex: 1;
+  width: auto;
+  padding: 6px;
+  font-size: 12px;
+}
+
+.btn-secondary {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.btn-secondary:hover {
+  background: #ccc;
+}

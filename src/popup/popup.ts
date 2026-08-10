@@ -1,4 +1,5 @@
 interface Bookmark {
+  id: string;
   url: string;
   title: string;
   createdAt: number;
@@ -8,10 +9,25 @@ function isBookmarklet(url: string): boolean {
   return url.trimStart().toLowerCase().startsWith("javascript:");
 }
 
+function generateId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function decodeBookmarkletCode(js: string): string {
+  // Bookmarklets aren't required to be percent-encoded, so treat decoding as
+  // best-effort: fall back to the raw code if it contains a literal "%" that
+  // isn't part of a valid escape sequence.
+  try {
+    return decodeURIComponent(js);
+  } catch {
+    return js;
+  }
+}
+
 function executeBookmarklet(tabId: number, code: string): void {
   // Strip the "javascript:" prefix to get the code to execute
   const js = code.replace(/^\s*javascript:\s*/i, "");
-  browser.tabs.executeScript(tabId, { code: decodeURIComponent(js) });
+  browser.tabs.executeScript(tabId, { code: decodeBookmarkletCode(js) });
 }
 
 interface SiteBookmarks {
@@ -23,7 +39,22 @@ const STORAGE_KEY = "siteBookmarks";
 async function getBookmarksForSite(hostname: string): Promise<Bookmark[]> {
   const result = await browser.storage.local.get(STORAGE_KEY);
   const all = (result[STORAGE_KEY] as SiteBookmarks) ?? {};
-  return all[hostname] ?? [];
+  const bookmarks = all[hostname] ?? [];
+
+  // Migrate any bookmarks saved before ids were introduced
+  let migrated = false;
+  for (const bookmark of bookmarks) {
+    if (!bookmark.id) {
+      bookmark.id = generateId();
+      migrated = true;
+    }
+  }
+  if (migrated) {
+    all[hostname] = bookmarks;
+    await browser.storage.local.set({ [STORAGE_KEY]: all });
+  }
+
+  return bookmarks;
 }
 
 async function saveBookmarksForSite(hostname: string, bookmarks: Bookmark[]): Promise<void> {
@@ -31,6 +62,74 @@ async function saveBookmarksForSite(hostname: string, bookmarks: Bookmark[]): Pr
   const all = (result[STORAGE_KEY] as SiteBookmarks) ?? {};
   all[hostname] = bookmarks;
   await browser.storage.local.set({ [STORAGE_KEY]: all });
+}
+
+function renderEditForm(
+  li: HTMLLIElement,
+  bookmark: Bookmark,
+  list: HTMLUListElement,
+  hostname: string,
+): void {
+  li.innerHTML = "";
+  li.classList.add("editing");
+
+  const form = document.createElement("form");
+  form.className = "edit-form";
+
+  const urlInput = document.createElement("input");
+  urlInput.type = "text";
+  urlInput.value = bookmark.url;
+  urlInput.required = true;
+  urlInput.placeholder = "URL";
+
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.value = bookmark.title;
+  titleInput.placeholder = "Title (optional)";
+
+  const actions = document.createElement("div");
+  actions.className = "edit-actions";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "submit";
+  saveBtn.className = "btn btn-primary btn-small";
+  saveBtn.textContent = "Save";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "btn btn-secondary btn-small";
+  cancelBtn.textContent = "Cancel";
+
+  actions.appendChild(saveBtn);
+  actions.appendChild(cancelBtn);
+
+  form.appendChild(urlInput);
+  form.appendChild(titleInput);
+  form.appendChild(actions);
+  li.appendChild(form);
+
+  cancelBtn.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    const bookmarks = await getBookmarksForSite(hostname);
+    renderBookmarks(bookmarks, list, hostname);
+  });
+
+  form.addEventListener("click", (event) => event.stopPropagation());
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const url = urlInput.value.trim();
+    if (!url) return;
+
+    const bookmarks = await getBookmarksForSite(hostname);
+    const updated = bookmarks.map((b) =>
+      b.id === bookmark.id ? { ...b, url, title: titleInput.value.trim() } : b,
+    );
+    await saveBookmarksForSite(hostname, updated);
+    renderBookmarks(updated, list, hostname);
+  });
+
+  urlInput.focus();
 }
 
 function renderBookmarks(
@@ -84,6 +183,15 @@ function renderBookmarks(
       });
     }
 
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn-edit";
+    editBtn.textContent = "✎";
+    editBtn.title = "Edit bookmark";
+    editBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      renderEditForm(li, bookmark, list, hostname);
+    });
+
     const removeBtn = document.createElement("button");
     removeBtn.className = "btn-remove";
     removeBtn.textContent = "✕";
@@ -91,13 +199,14 @@ function renderBookmarks(
     removeBtn.addEventListener("click", async (event) => {
       event.stopPropagation();
       const updated = (await getBookmarksForSite(hostname)).filter(
-        (b) => b.url !== bookmark.url,
+        (b) => b.id !== bookmark.id,
       );
       await saveBookmarksForSite(hostname, updated);
       renderBookmarks(updated, list, hostname);
     });
 
     li.appendChild(text);
+    li.appendChild(editBtn);
     li.appendChild(removeBtn);
     list.appendChild(li);
   }
@@ -129,6 +238,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (bookmarks.some((b) => b.url === url)) return;
 
     const newBookmark: Bookmark = {
+      id: generateId(),
       url,
       title: inputTitle.value.trim(),
       createdAt: Date.now(),
